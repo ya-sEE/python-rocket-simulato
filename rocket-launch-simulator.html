@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rocket Launch Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#070d1f;--panel:#0f1830;--line:#22325c;--ink:#e4ecfa;--mute:#8d9cc0;--flame:#ff9a3c;--sig:#5fe0c8;--bad:#ff6b6b;
+color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 Barlow,system-ui,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:20px 16px 40px}
+h1{font:700 clamp(30px,6vw,52px)/1 "Barlow Condensed",Impact,sans-serif;margin:8px 0 6px;letter-spacing:.01em}
+.sub{color:var(--mute);margin:0 0 20px;max-width:62ch}
+.grid{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:18px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+canvas{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;background:#000}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.panel h2{font:600 22px "Barlow Condensed",sans-serif;margin:0 0 12px}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin-bottom:10px}
+.row label{color:var(--mute)}
+.row output{font-weight:500;color:var(--sig)}
+.row input{grid-column:1/3;width:100%;accent-color:var(--flame)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{border-left:3px solid var(--line);padding-left:10px}
+.stat b{display:block;font:700 30px/1.05 "Barlow Condensed",sans-serif}
+.stat span{color:var(--mute);font-size:14px}
+.stat.hot{border-color:var(--flame)}.stat.esc{border-color:var(--sig)}
+.meter{height:14px;background:#0a1127;border:1px solid var(--line);border-radius:7px;overflow:hidden;margin:8px 0 4px}
+.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--flame),var(--sig))}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+button{font:600 18px "Barlow Condensed",sans-serif;padding:10px 18px;border-radius:8px;border:1px solid var(--line);background:#16224a;color:var(--ink);cursor:pointer}
+button.go{background:var(--flame);color:#1a0d00;border-color:var(--flame)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:2px solid var(--sig);outline-offset:2px}
+#msg{min-height:1.5em;margin:10px 0 0;font-weight:500}
+.note{color:var(--mute);font-size:14px;margin:0}
+</style>
+</head>
+<body>
+<main>
+<h1>Rocket Launch Simulator</h1>
+<p class="sub">Set the thrust and fuel, launch straight up, and watch altitude, speed, and escape velocity change as the rocket climbs. Earth’s escape speed is 11.19 km/s at the surface and drops with height.</p>
+<div class="grid">
+<div>
+<canvas id="cv" width="380" height="560" aria-label="Rocket flight view"></canvas>
+</div>
+<div>
+<section class="panel">
+<h2>Rocket setup</h2>
+<div class="row"><label for="thr">Engine thrust</label><output id="thrO"></output><input id="thr" type="range" min="500" max="20000" step="100" value="3000"></div>
+<div class="row"><label for="fuel">Fuel mass</label><output id="fuelO"></output><input id="fuel" type="range" min="20" max="1000" step="10" value="200"></div>
+<div class="row"><label for="isp">Engine efficiency (Isp)</label><output id="ispO"></output><input id="isp" type="range" min="250" max="460" step="5" value="350"></div>
+<div class="row"><label for="warp">Time speed</label><output id="warpO"></output><input id="warp" type="range" min="1" max="100" step="1" value="5"></div>
+<div class="btns">
+<button class="go" id="launch">Launch</button>
+<button id="reset">Reset</button>
+<button id="p1">Small rocket</button>
+<button id="p2">Escape rocket</button>
+</div>
+<p id="msg" role="status"></p>
+<p class="note" id="plan"></p>
+</section>
+<section class="panel">
+<h2>Flight data</h2>
+<div class="stats">
+<div class="stat"><b id="sAlt">0 km</b><span>Altitude</span></div>
+<div class="stat"><b id="sVel">0 km/s</b><span>Speed</span></div>
+<div class="stat hot"><b id="sThr">0 kN</b><span>Thrust now</span></div>
+<div class="stat esc"><b id="sEsc">11.19 km/s</b><span>Escape velocity here</span></div>
+<div class="stat"><b id="sMax">0 km</b><span>Highest point</span></div>
+<div class="stat"><b id="sFuel">100%</b><span>Fuel left</span></div>
+</div>
+<div class="meter"><i id="bar"></i></div>
+<p class="note" id="barT">Speed vs. escape velocity: 0%</p>
+</section>
+</div>
+</div>
+</main>
+<script>
+(function(){
+var G=6.674e-11,M=5.972e24,R=6.371e6,g0=9.80665,DRY=25000;
+var $=function(i){return document.getElementById(i)};
+var cv=$('cv'),cx=cv.getContext('2d'),W=cv.width,H=cv.height;
+var s,raf,last;
+var stars=[];for(var i=0;i<70;i++)stars.push([Math.random()*W,Math.random()*H,Math.random()*1.6+.3]);
+function num(x,d){return x.toLocaleString('en-US',{maximumFractionDigits:d,minimumFractionDigits:d})}
+function vesc(h){return Math.sqrt(2*G*M/(R+h))}
+function cfg(){return{thr:+$('thr').value*1000,fuel:+$('fuel').value*1000,isp:+$('isp').value,warp:+$('warp').value}}
+function fresh(){var c=cfg();s={h:0,v:0,fuel:c.fuel,fuel0:c.fuel,t:0,max:0,on:false,done:false,esc:false,fell:false,thrNow:0};}
+function plan(){
+var c=cfg(),m0=DRY+c.fuel,twr=c.thr/(m0*g0),dv=c.isp*g0*Math.log(m0/DRY),burn=c.fuel/(c.thr/(c.isp*g0));
+$('thrO').textContent=num(c.thr/1000,0)+' kN';$('fuelO').textContent=num(c.fuel/1000,0)+' t';
+$('ispO').textContent=c.isp+' s';$('warpO').textContent=c.warp+'×';
+$('plan').textContent='Launch weight '+num(m0/1000,0)+' t (25 t empty rocket). Thrust-to-weight '+num(twr,2)+'. Ideal speed gain '+num(dv/1000,1)+' km/s over a '+num(burn,0)+' s burn. Escape needs 11.19 km/s plus air and gravity losses.';
+var ok=twr>1;$('launch').disabled=!ok||s.on||s.done;
+if(!ok&&!s.on)msg('Thrust is lower than the rocket’s weight. Raise thrust or reduce fuel to lift off.','bad');
+else if(!s.on&&!s.done)msg('');
+}
+function msg(t,k){var m=$('msg');m.textContent=t;m.style.color=k==='bad'?'var(--bad)':k==='ok'?'var(--sig)':'var(--ink)'}
+function step(dt){
+var c=cfg(),burning=s.fuel>0,F=burning?c.thr:0;
+if(burning){s.fuel-=F/(c.isp*g0)*dt;if(s.fuel<0)s.fuel=0}
+var h=s.h,m=DRY+s.fuel,g=G*M/((R+h)*(R+h));
+var rho=1.225*Math.exp(-h/8500),drag=0.5*rho*s.v*Math.abs(s.v)*0.3*10;
+var a=(F-drag)/m-g;
+if(h<=0&&a<0&&s.v<=0){s.v=0;s.h=0;s.thrNow=F;if(!burning)end('The engine ran out before liftoff.','bad');return}
+s.v+=a*dt;s.h+=s.v*dt;s.t+=dt;s.thrNow=F;
+if(s.h>s.max)s.max=s.h;
+if(s.h<=0){s.h=0;end(s.v<-20?'Crashed back to Earth at '+num(-s.v,0)+' m/s. Highest point: '+num(s.max/1000,0)+' km.':'Landed.','bad');return}
+if(!s.esc&&s.v>=vesc(s.h)&&s.h>1000){s.esc=true;msg('Escape velocity reached at '+num(s.h/1000,0)+' km. The rocket will not fall back.','ok')}
+if(!s.esc&&!s.fell&&s.v<0&&s.t>2){s.fell=true;msg('Highest point '+num(s.max/1000,1)+' km. Falling back to Earth.','bad')}
+if(s.esc&&s.h>2e8){end('Escape confirmed. Rocket is 200,000 km from Earth and still climbing.','ok')}
+}
+function end(t,k){s.done=true;s.on=false;msg(t,k);$('launch').disabled=true}
+function tick(ts){
+var dtf=Math.min((ts-last)/1000,0.05);last=ts;
+if(s.on&&!s.done){var n=Math.max(1,Math.round(cfg().warp*dtf/0.02));for(var i=0;i<n&&!s.done;i++)step(0.02)}
+ui();draw(dtf);raf=requestAnimationFrame(tick)
+}
+function ui(){
+var ve=vesc(s.h);
+$('sAlt').textContent=num(s.h/1000,s.h<1e5?1:0)+' km';
+$('sVel').textContent=num(Math.abs(s.v)/1000,2)+' km/s';
+$('sThr').textContent=num((s.fuel>0&&s.on?s.thrNow:0)/1000,0)+' kN';
+$('sEsc').textContent=num(ve/1000,2)+' km/s';
+$('sMax').textContent=num(s.max/1000,1)+' km';
+$('sFuel').textContent=num(s.fuel/s.fuel0*100,0)+'%';
+var p=Math.max(0,Math.min(1,s.v/ve));
+$('bar').style.width=p*100+'%';$('barT').textContent='Speed vs. escape velocity: '+num(p*100,0)+'%';
+}
+function mix(a,b,f){return a.map(function(x,i){return Math.round(x+(b[i]-x)*f)})}
+function draw(dtf){
+var f=Math.min(1,s.h/100000),top=mix([74,163,232],[3,5,14],f),bot=mix([150,200,240],[7,12,30],f);
+var g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,'rgb('+top+')');g.addColorStop(1,'rgb('+bot+')');
+cx.fillStyle=g;cx.fillRect(0,0,W,H);
+var sa=Math.max(0,Math.min(1,(s.h-30000)/60000));
+cx.fillStyle='rgba(255,255,255,'+sa+')';
+var sp=Math.min(60,Math.abs(s.v)*0.02)*dtf*60/6;
+stars.forEach(function(st){st[1]+=sp;if(st[1]>H)st[1]-=H;cx.fillRect(st[0],st[1],st[2],st[2])});
+var ry=H*0.5,off=170*Math.log10(1+s.h/60),gy=ry+95+off;
+if(gy<H+5){cx.fillStyle='#1f3b2a';cx.fillRect(0,gy,W,H-gy);cx.fillStyle='#2e5a40';cx.fillRect(0,gy,W,4)}
+cx.font='12px Barlow,sans-serif';cx.textAlign='right';
+[[0,'0'],[1000,'1 km'],[10000,'10 km'],[100000,'100 km'],[1e6,'1,000 km'],[1e7,'10,000 km'],[1e8,'100,000 km']].forEach(function(t){
+var y=ry+95-(170*Math.log10(1+t[0]/60)-off)*-1;y=ry+95+off-170*Math.log10(1+t[0]/60);
+if(y>0&&y<H){cx.fillStyle='rgba(255,255,255,.65)';cx.fillRect(W-30,y,30,1);cx.fillText(t[1],W-34,y-3)}});
+var x=W/2;
+if(s.on&&s.fuel>0){var fl=40+Math.random()*30+Math.min(60,s.thrNow/1e6*6);
+var fg=cx.createLinearGradient(0,ry+95,0,ry+95+fl);fg.addColorStop(0,'#fff4b0');fg.addColorStop(.4,'#ff9a3c');fg.addColorStop(1,'rgba(255,80,20,0)');
+cx.fillStyle=fg;cx.beginPath();cx.moveTo(x-12,ry+92);cx.lineTo(x+12,ry+92);cx.lineTo(x,ry+95+fl);cx.fill()}
+cx.fillStyle='#c9d4ea';cx.fillRect(x-16,ry-60,32,152);
+cx.fillStyle='#ff9a3c';cx.beginPath();cx.moveTo(x-16,ry-60);cx.quadraticCurveTo(x,ry-130,x+16,ry-60);cx.fill();
+cx.fillStyle='#3a4a73';cx.beginPath();cx.moveTo(x-16,ry+50);cx.lineTo(x-34,ry+95);cx.lineTo(x-16,ry+92);cx.fill();
+cx.beginPath();cx.moveTo(x+16,ry+50);cx.lineTo(x+34,ry+95);cx.lineTo(x+16,ry+92);cx.fill();
+cx.fillStyle='#5fe0c8';cx.beginPath();cx.arc(x,ry-30,7,0,7);cx.fill();
+}
+function start(){cancelAnimationFrame(raf);fresh();plan();last=performance.now();raf=requestAnimationFrame(tick)}
+$('launch').onclick=function(){if(!s.on&&!s.done){s.on=true;$('launch').disabled=true;msg('Liftoff.')}};
+$('reset').onclick=start;
+['thr','fuel','isp','warp'].forEach(function(i){$(i).oninput=function(){if(!s.on){if(s.done){start()}else{fresh()}}plan()}});
+$('p1').onclick=function(){$('thr').value=1500;$('fuel').value=80;$('isp').value=300;start()};
+$('p2').onclick=function(){$('thr').value=15000;$('fuel').value=900;$('isp').value=450;$('warp').value=20;start()};
+start();
+})();
+</script>
+</body>
+</html>
